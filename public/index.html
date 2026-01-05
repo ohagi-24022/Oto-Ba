@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Music Player</title>
+    <style>
+        /* デザイン設定 */
+        body { font-family: Arial, sans-serif; background-color: #7289da; margin: 0; display: flex; justify-content: center; height: 100vh; }
+        .app-container { width: 100%; max-width: 400px; background-color: #7296F3; display: flex; flex-direction: column; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
+        #player-area { background: #000; height: 200px; flex-shrink: 0; }
+        #status-bar { background: #333; color: white; padding: 5px; font-size: 12px; text-align: center; }
+        #chat-area { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: #8fb6eb; display: flex; flex-direction: column; gap: 10px; }
+        .message { max-width: 80%; padding: 10px; border-radius: 15px; font-size: 14px; background-color: #fff; word-wrap: break-word; }
+        .message.system { align-self: center; background-color: rgba(0,0,0,0.1); color: #fff; font-size: 11px; }
+        .input-area { background: #f0f0f0; padding: 10px; display: flex; gap: 10px; }
+        input[type="text"] { flex-grow: 1; padding: 10px; border-radius: 20px; border: 1px solid #ccc; }
+        button { padding: 10px 20px; border-radius: 20px; border: none; background-color: #2d9bf0; color: white; cursor: pointer; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; color: white; z-index: 999; flex-direction: column; }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h2>Music Chat App</h2>
+        <button id="start-btn" style="font-size:1.2rem;">スタート</button>
+    </div>
+
+    <div class="app-container">
+        <div id="player-area"><div id="player"></div></div>
+        <div id="status-bar">準備中...</div>
+        <div id="chat-area"></div>
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="URLまたはメッセージ..." autocomplete="off">
+            <button onclick="sendChat()">送信</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+
+    <script>
+        const socket = io(); // サーバーと接続
+        
+        let player;
+        let queue = [];
+        let isPlayingUserContent = false;
+        let currentDefaultId = "jfKfPfyJRdk"; // デフォルト曲(Lo-Fi)
+
+        // --- YouTube API設定 ---
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '100%', width: '100%',
+                videoId: currentDefaultId,
+                playerVars: { 'playsinline': 1 },
+                events: { 'onStateChange': onPlayerStateChange }
+            });
+        }
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            document.getElementById('overlay').style.display = 'none';
+            playDefaultBGM();
+        });
+
+        // --- サーバーからの受信処理 ---
+        socket.on('chat-message', (msg) => {
+            addMessageToScreen(msg);
+
+            // YouTube URLが含まれているかチェック
+            const videoId = extractYouTubeId(msg);
+            
+            // スキップコマンド
+            if (msg === "スキップ" || msg.toLowerCase() === "skip") {
+                if (isPlayingUserContent) playNext();
+                return;
+            }
+
+            // URLの場合
+            if (videoId) {
+                queue.push(videoId);
+                updateStatus(`予約追加 (待ち: ${queue.length}曲)`);
+                // 今デフォルト再生中なら、すぐに切り替える
+                if (!isPlayingUserContent) {
+                    playNext();
+                }
+            }
+        });
+
+        // --- 送信処理 ---
+        function sendChat() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if(!text) return;
+            
+            // サーバーへ送信（自分だけでなく全員に表示されるようになる）
+            socket.emit('chat-message', text);
+            input.value = '';
+        }
+
+        // --- 再生ロジック ---
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.ENDED) {
+                if (isPlayingUserContent) {
+                    playNext();
+                } else {
+                    player.playVideo(); // デフォルト曲ループ
+                }
+            }
+        }
+
+        function playNext() {
+            if (queue.length > 0) {
+                const nextId = queue.shift();
+                isPlayingUserContent = true;
+                player.loadVideoById(nextId);
+                updateStatus(`再生中: ユーザーリクエスト`);
+            } else {
+                playDefaultBGM();
+            }
+        }
+
+        function playDefaultBGM() {
+            isPlayingUserContent = false;
+            player.loadVideoById(currentDefaultId);
+            updateStatus("再生中: デフォルトBGM");
+        }
+
+        // --- ユーティリティ ---
+        function addMessageToScreen(text) {
+            const chatArea = document.getElementById('chat-area');
+            const div = document.createElement('div');
+            div.className = 'message';
+            div.innerText = text;
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function updateStatus(text) {
+            document.getElementById('status-bar').innerText = text;
+        }
+
+        function extractYouTubeId(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+    </script>
+</body>
+</html>
