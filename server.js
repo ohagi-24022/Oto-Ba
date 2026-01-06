@@ -16,7 +16,6 @@ const io = new Server(server);
 
 let currentDefaultId = "QngwLXMRTSc"; // 初期値
 
-// 全角英数字・スペースを半角に直す関数
 function toHalfWidth(str) {
     if (!str) return "";
     return str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, function(s) {
@@ -24,17 +23,10 @@ function toHalfWidth(str) {
     }).replace(/　/g, ' ').trim();
 }
 
-// ★コマンド解析用関数（カッコやスペースを柔軟に処理）
 function parseDefaultCommand(text) {
     const normalized = toHalfWidth(text);
-    // "default" で始まり、その後に " " か "[" が続く、もしくは "default" だけの場合などを検知
     const match = normalized.match(/^default\s*\[?(.+?)\]?$/i) || normalized.match(/^default\s+(.+)$/i);
-    
-    if (match) {
-        // マッチした場合、中身（URLやキーワード）を返す
-        return match[1].trim(); 
-    }
-    // "default[...]" のようなスペース無しのパターンもカバー
+    if (match) return match[1].trim();
     if (normalized.toLowerCase().startsWith('default[')) {
         return normalized.substring(7).replace(/\]$/, '').trim();
     }
@@ -46,7 +38,7 @@ app.post('/callback', line.middleware(config), (req, res) => {
     Promise.all(req.body.events.map(handleLineEvent))
         .then((result) => res.json(result))
         .catch((err) => {
-            console.error("LINE Webhook Error:", err.originalError?.response?.data || err);
+            console.error("LINE Error:", err.originalError?.response?.data || err);
             res.status(500).end();
         });
 });
@@ -54,83 +46,80 @@ app.post('/callback', line.middleware(config), (req, res) => {
 async function handleLineEvent(event) {
     const client = new line.Client(config);
 
+    // ★ ポストバック処理（ボタンが押された時）
     if (event.type === 'postback') {
         const data = new URLSearchParams(event.postback.data);
         const videoId = data.get('videoId');
+        const mode = data.get('mode'); // ★モード判定を追加
+
+        // A. デフォルト変更モードの場合
+        if (mode === 'default') {
+            currentDefaultId = videoId;
+            io.emit('update-default', { videoId: videoId });
+            io.emit('chat-message', `🔄 LINEからデフォルトBGMが変更されました`);
+            return client.replyMessage(event.replyToken, { 
+                type: 'text', text: `✅ デフォルトBGMを変更しました！` 
+            });
+        }
+
+        // B. 通常の予約モードの場合
         io.emit('add-queue', { videoId, title: 'LINEからのリクエスト', source: 'LINE' });
         return client.replyMessage(event.replyToken, { 
-            type: 'text', text: `✅ リクエストを受け付けました！\n(再生まで少しお待ちください)` 
+            type: 'text', text: `✅ リクエストを受け付けました！` 
         });
     }
 
     if (event.type === 'message' && event.message.type === 'text') {
         const rawText = event.message.text;
 
-        // ★ defaultコマンド (判定ロジックを変更)
+        // ★ defaultコマンド
         const defaultCommandQuery = parseDefaultCommand(rawText);
-        
         if (defaultCommandQuery) {
             let newId = extractYouTubeId(defaultCommandQuery);
-            
-            // URLじゃなければ検索
-            if (!newId && YOUTUBE_API_KEY) {
-                try {
-                    const items = await searchYouTube(defaultCommandQuery);
-                    if (items.length > 0) newId = items[0].id.videoId;
-                } catch(e) {}
-            }
 
+            // 1. URLが直接指定された場合 → 即変更
             if (newId) {
                 currentDefaultId = newId;
                 io.emit('update-default', { videoId: newId });
                 io.emit('chat-message', `🔄 LINEからデフォルトBGMが変更されました`);
                 return client.replyMessage(event.replyToken, { type: 'text', text: '✅ デフォルトBGMを変更しました！' });
-            } else {
-                return client.replyMessage(event.replyToken, { type: 'text', text: '⚠️ 動画が見つかりませんでした。' });
             }
-        }
 
-        // 1. コメント
-        if (rawText.startsWith('#')) {
-            io.emit('flow-comment', rawText);
+            // 2. キーワードの場合 → 検索結果（選択肢）を返す
+            if (YOUTUBE_API_KEY) {
+                try {
+                    const items = await searchYouTube(defaultCommandQuery);
+                    if (!items || items.length === 0) {
+                        return client.replyMessage(event.replyToken, { type: 'text', text: '😢 見つかりませんでした' });
+                    }
+                    // ★「デフォルト設定用」のボタンを作成（mode=defaultをつける）
+                    const bubbles = createCarousel(items, "設定する", "default");
+                    return client.replyMessage(event.replyToken, { type: "flex", altText: "デフォルト変更", contents: { type: "carousel", contents: bubbles } });
+                } catch (e) {
+                    return client.replyMessage(event.replyToken, { type: 'text', text: '⚠️ エラーが発生しました' });
+                }
+            }
             return;
         }
 
-        // 2. URL or コマンド
+        // コメント、URL、通常検索など
+        if (rawText.startsWith('#')) { io.emit('flow-comment', rawText); return; }
         const normalizedText = toHalfWidth(rawText);
-        if (isUrl(normalizedText) || isCommand(normalizedText)) {
+        if (isUrl(normalizedText) || isCommand(normalizedText)) { 
             io.emit('chat-message', normalizedText); 
             return client.replyMessage(event.replyToken, { type: 'text', text: '✅ 受け付けました' });
         }
 
-        // 3. キーワード検索
-        if (!YOUTUBE_API_KEY) {
-            return client.replyMessage(event.replyToken, { type: 'text', text: '⚠️ サーバー設定エラー: APIキーがありません' });
-        }
-
-        try {
-            const items = await searchYouTube(rawText);
-            if (!items || items.length === 0) {
-                return client.replyMessage(event.replyToken, { type: 'text', text: '😢 見つかりませんでした（または検索上限です）' });
-            }
-
-            const bubbles = items.map(item => ({
-                type: "bubble", size: "kilo",
-                hero: { type: "image", url: item.snippet.thumbnails.high ? item.snippet.thumbnails.high.url : "https://via.placeholder.com/320x180", size: "full", aspectRatio: "16:9", aspectMode: "cover" },
-                body: { type: "box", layout: "vertical", contents: [{ type: "text", text: item.snippet.title, wrap: true, weight: "bold", size: "sm" }] },
-                footer: {
-                    type: "box", layout: "vertical",
-                    contents: [{
-                        type: "button", style: "primary", color: "#1DB446",
-                        action: { type: "postback", label: "予約する", data: `videoId=${item.id.videoId}` }
-                    }]
-                }
-            }));
-            return client.replyMessage(event.replyToken, { type: "flex", altText: "検索結果", contents: { type: "carousel", contents: bubbles } });
-
-        } catch (error) {
-            console.error("YouTube Search Error:", error);
-            return client.replyMessage(event.replyToken, { type: 'text', text: `⚠️ エラーが発生しました。\nURLを直接貼ってお試しください。` });
+        // 通常検索
+        if (YOUTUBE_API_KEY) {
+            try {
+                const items = await searchYouTube(rawText);
+                if (!items || items.length === 0) return client.replyMessage(event.replyToken, { type: 'text', text: '😢 なし' });
+                
+                // ★通常の予約ボタン（mode=queue、または指定なし）
+                const bubbles = createCarousel(items, "予約する", "queue");
+                return client.replyMessage(event.replyToken, { type: "flex", altText: "検索結果", contents: { type: "carousel", contents: bubbles } });
+            } catch (error) { return client.replyMessage(event.replyToken, { type: 'text', text: '⚠️ エラー' }); }
         }
     }
 }
@@ -140,48 +129,70 @@ io.on('connection', (socket) => {
     socket.emit('init-state', { defaultId: currentDefaultId });
 
     socket.on('client-input', async (rawText) => {
-        // ★ defaultコマンド (Web版)
+        // ★ defaultコマンド
         const defaultCommandQuery = parseDefaultCommand(rawText);
-
         if (defaultCommandQuery) {
             let newId = extractYouTubeId(defaultCommandQuery);
-            if (!newId && YOUTUBE_API_KEY) {
-                try {
-                    const items = await searchYouTube(defaultCommandQuery);
-                    if (items.length > 0) newId = items[0].id.videoId;
-                } catch(e) {}
-            }
+            // URLなら即変更
             if (newId) {
                 currentDefaultId = newId;
                 io.emit('update-default', { videoId: newId });
                 io.emit('chat-message', `🔄 PCからデフォルトBGMが変更されました`);
+                return;
+            }
+            // キーワードなら「デフォルト設定用」の検索結果を個別に返す
+            if (YOUTUBE_API_KEY) {
+                try {
+                    const items = await searchYouTube(defaultCommandQuery);
+                    // ★特別なイベント名で返す
+                    socket.emit('search-results-for-default', items);
+                } catch(e) {}
             }
             return;
         }
         
-        if (rawText.startsWith('#')) {
-            io.emit('flow-comment', rawText); return; 
-        }
-
+        // 以下通常処理
+        if (rawText.startsWith('#')) { io.emit('flow-comment', rawText); return; }
         const normalizedText = toHalfWidth(rawText);
-        if (isUrl(normalizedText) || isCommand(normalizedText)) { 
-            io.emit('chat-message', normalizedText); return; 
-        }
+        if (isUrl(normalizedText) || isCommand(normalizedText)) { io.emit('chat-message', normalizedText); return; }
 
         if (YOUTUBE_API_KEY) {
             try {
                 const items = await searchYouTube(rawText);
-                socket.emit('search-results', items);
+                socket.emit('search-results', items); // 通常検索結果
             } catch(e) {}
         }
     });
 
+    // 通常の予約
     socket.on('select-video', (data) => {
         io.emit('add-queue', { videoId: data.videoId, title: data.title, source: 'PC' });
+    });
+
+    // ★ 新追加: デフォルト変更の確定
+    socket.on('select-default', (data) => {
+        currentDefaultId = data.videoId;
+        io.emit('update-default', { videoId: data.videoId });
+        io.emit('chat-message', `🔄 PCからデフォルトBGMが変更されました: ${data.title}`);
     });
 });
 
 app.use(express.static('public'));
+
+// 共通ヘルパー: LINEのカルーセルを作る関数
+function createCarousel(items, buttonLabel, mode) {
+    return items.map(item => ({
+        type: "bubble", size: "kilo",
+        hero: { type: "image", url: item.snippet.thumbnails.high ? item.snippet.thumbnails.high.url : "https://via.placeholder.com/320", size: "full", aspectRatio: "16:9", aspectMode: "cover" },
+        body: { type: "box", layout: "vertical", contents: [{ type: "text", text: item.snippet.title, wrap: true, weight: "bold", size: "sm" }] },
+        footer: {
+            type: "box", layout: "vertical", contents: [{
+                type: "button", style: "primary", color: mode === 'default' ? "#E04F5F" : "#1DB446", // デフォルト設定は赤色ボタン
+                action: { type: "postback", label: buttonLabel, data: `videoId=${item.id.videoId}&mode=${mode}` } // modeを埋め込む
+            }]
+        }
+    }));
+}
 
 function isUrl(text) { return text.includes('youtube.com') || text.includes('youtu.be'); }
 function isCommand(text) { return text === 'スキップ' || text.toLowerCase() === 'skip'; }
