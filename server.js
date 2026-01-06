@@ -14,7 +14,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-let currentDefaultId = "jfKfPfyJRdk"; // 初期値
+let currentDefaultId = "QngwLXMRTSc?si=Yr1KUGukQIyPtkmj"; // 初期値
 
 // --- LINE Webhook ---
 app.post('/callback', line.middleware(config), (req, res) => {
