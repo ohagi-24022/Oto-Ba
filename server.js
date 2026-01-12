@@ -14,7 +14,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-let currentDefaultId = "QngwLXMRTSc"; // 初期値
+let currentDefaultId = "7Q3BGAPAGQY"; // 初期値
 
 function toHalfWidth(str) {
     if (!str) return "";
