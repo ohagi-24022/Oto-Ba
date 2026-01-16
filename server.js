@@ -224,8 +224,31 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('select-video', (data) => {
-        io.emit('add-queue', { videoId: data.videoId, title: data.title, source: 'PC' });
+    socket.on('select-video', async (data) => {
+        // ★変更: プレイリスト(type: 'playlist')なら中身を展開して予約
+        if (data.type === 'playlist') {
+            try {
+                const items = await getPlaylistItems(data.videoId);
+                if (items.length > 0) {
+                    items.forEach(item => {
+                        const vid = item.snippet.resourceId.videoId;
+                        if (vid) {
+                            io.emit('add-queue', { 
+                                videoId: vid, 
+                                title: item.snippet.title, 
+                                source: 'Favorite(List)' 
+                            });
+                        }
+                    });
+                    io.emit('chat-message', `📂 お気に入りからプレイリストを予約しました (${items.length}曲)`);
+                }
+            } catch (e) {
+                console.error("Fav Playlist Error", e);
+            }
+        } else {
+            // 通常の動画(video)ならそのまま予約
+            io.emit('add-queue', { videoId: data.videoId, title: data.title, source: 'Favorite' });
+        }
     });
 
     socket.on('select-default', (data) => {
