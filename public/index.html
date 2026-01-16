@@ -66,8 +66,11 @@
 
     <script>
         const favorites = [
-            { id: "jfKfPfyJRdk", label: "Lofi Girl", type: "video" },
-            { id: "5qap5aO4i9A", label: "Lofi HipHop", type: "video" }
+            { id: "AOfaWrBwo7I", label: "ひゅるりらぱっぱ", type: "video" },
+            { id: "P_CSdxSGfaA", label: "アンノウンマザーグース", type: "video" },
+            { id: "nIWZfhpnq6M", label: "桜日和とタイムマシン", type: "video" },
+            { id: "0Y8e0LJf0i0", label: "リベリオン", type: "video" },
+            { id: "PL8yi53amb2is2sQGNGRabKnGC1E-kmVl6", label: "ado", type: "playlist"}
         ];
 
         const socket = io();
@@ -76,7 +79,7 @@
         let isPlayingUserContent = false;
         
         // ★初期値はオブジェクト
-        let currentDefault = { id: "jfKfPfyJRdk", type: "video" };
+        let currentDefault = { id: "7Q3BGAPAGQY", type: "video" };
 
         socket.on('init-state', (data) => { 
             // サーバーから初期設定を受け取る
@@ -148,8 +151,8 @@
             input.value = '';
         }
 
-        function selectVideo(videoId, title) {
-            socket.emit('select-video', { videoId, title });
+        function selectVideo(videoId, title, type = 'video') {
+        socket.emit('select-video', { videoId, title, type });
         }
         function selectDefault(videoId, title) {
             socket.emit('select-default', { videoId, title });
@@ -271,7 +274,8 @@
         favorites.forEach(fav => {
             const btn = document.createElement('button');
             btn.className = 'fav-btn'; btn.innerText = fav.label;
-            btn.onclick = () => selectVideo(fav.id, fav.label);
+            // ★修正: type も一緒に渡す
+            btn.onclick = () => selectVideo(fav.id, fav.label, fav.type);
             favArea.appendChild(btn);
         });
         document.getElementById('message-input').addEventListener('keypress', (e) => {
