@@ -146,21 +146,34 @@
             const videoId = extractYouTubeId(msg);
             const lowerMsg = msg.toLowerCase();
 
-            // ★スキップ機能: 何がなんでも次のリクエストへ
+            // 1. スキップ (デフォルト再生中は無視する)
             if (lowerMsg === "skip" || msg === "スキップ") {
-                playNext();
+                if (isPlayingUserContent) {
+                    playNext(); // リクエスト再生中だけ次へ
+                }
+                // デフォルト再生中は何もしない（returnするだけ）
                 return;
             }
 
-            // ★ネクスト機能: 状況によって分岐
+            // 2. ネクスト (次はどうする？)
             if (lowerMsg === "next" || msg === "ネクスト") {
                 if (isPlayingUserContent) {
-                    // リクエスト再生中ならスキップと同じ
-                    playNext();
+                    playNext(); // リクエスト中ならスキップと同じ
                 } else {
-                    // デフォルト再生中なら、プレイリストの次の曲へ
+                    // デフォルト(プレイリスト)再生中なら、リストの次の曲へ
                     if (player && typeof player.nextVideo === 'function') {
                         player.nextVideo();
+                    }
+                }
+                return;
+            }
+
+            // 3. ★追加: バック (前へ戻る)
+            if (lowerMsg === "back" || msg === "バック") {
+                // リクエスト再生中に「戻る」は難しいので、デフォルト再生中のみ対応
+                if (!isPlayingUserContent) {
+                    if (player && typeof player.previousVideo === 'function') {
+                        player.previousVideo();
                     }
                 }
                 return;
